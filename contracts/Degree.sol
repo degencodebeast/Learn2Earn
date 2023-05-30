@@ -13,26 +13,17 @@ contract Degree is ERC721, ERC721URIStorage, Ownable {
 
     mapping(uint256 => string) _tokenURIs;
 
-    address private immutable i_admin;
     address private immutable i_burnerAddress;
 
     /**
      * @dev Initializes the contract by setting an admin and burner address. The burner address is used to create a modifier so that nobody is able to burn their nft.
      */
-    constructor(
-        address _admin,
-        address _burnerAddress
-    ) ERC721("Degree", "DEG") {
-        i_admin = _admin;
+    constructor(address _burnerAddress) ERC721("Degree", "DEG") {
         i_burnerAddress = _burnerAddress;
     }
 
-    modifier onlyAdmin() {
-        require(msg.sender == i_admin, "Only an Admin has access!");
-        _;
-    }
-
     modifier onlyBurner() {
+        // i_burnerAddress is an address that we created and did not save the private key making it essentially an unusable wallet
         require(msg.sender == i_burnerAddress, "You can't burn this token!");
         _;
     }
@@ -43,7 +34,7 @@ contract Degree is ERC721, ERC721URIStorage, Ownable {
 
     /**
      * @dev This function is not meant to be but is required to be implemented by solidity. To make sure it can't be called, the onlyBurner modifier was made with an address that we created. As an additional precaution when the function is called it reverts.
-     * @param tokenId
+     * @param tokenId .
      */
     function _burn(
         uint256 tokenId
@@ -53,7 +44,7 @@ contract Degree is ERC721, ERC721URIStorage, Ownable {
 
     /**
      * @dev     The following function's override is required.
-     * @param   tokenId
+     * @param   tokenId .
      * @return  string
      */
     function tokenURI(
@@ -64,8 +55,8 @@ contract Degree is ERC721, ERC721URIStorage, Ownable {
 
     /**
      * @dev
-     * @param   to
-     * @param   uri
+     * @param   to  .
+     * @param   uri .
      */
     function safeMint(address to, string memory uri) public onlyOwner {
         uint256 tokenId = _tokenIdCounter.current();
@@ -77,10 +68,10 @@ contract Degree is ERC721, ERC721URIStorage, Ownable {
 
     /**
      * @dev
-     * @param   from
-     * @param   to
-     * @param   firstTokenId
-     * @param   batchSize
+     * @param   from    .
+     * @param   to  .
+     * @param   firstTokenId    .
+     * @param   batchSize   .
      */
     function _beforeTokenTransfer(
         address from,
@@ -93,15 +84,16 @@ contract Degree is ERC721, ERC721URIStorage, Ownable {
 
     /**
      * @dev
-     * @param   from
-     * @param   to
-     * @param   tokenId
+     * @param   from    .
+     * @param   to  .
+     * @param   tokenId .
      */
     function _transfer(
+        // approve the transaction first
         address from,
         address to,
         uint256 tokenId
-    ) internal override {
+    ) internal override onlyOwner {
         require(
             ERC721.ownerOf(tokenId) == from,
             "ERC721: transfer from incorrect owner"
@@ -119,19 +111,14 @@ contract Degree is ERC721, ERC721URIStorage, Ownable {
 
     /**
      * @dev     Function updates tokenUri. It will be called automatically by the chainlink keepers when a course is completed.
-     * @param   tokenId
-     * @param   uri
+     * @param   tokenId .
+     * @param   uri .
      */
     function updateTokenURI(
         uint256 tokenId,
         string memory uri
-    ) public onlyAdmin {
+    ) public onlyOwner {
         _setTokenURI(tokenId, uri);
         _tokenURIs[tokenId] = uri;
-    }
-
-    function getContractAddress() public view returns (address) {
-        // delete this function it is not necessary
-        return address(this);
     }
 }
