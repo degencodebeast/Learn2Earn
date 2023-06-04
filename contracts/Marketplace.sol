@@ -4,11 +4,14 @@ pragma solidity ^0.8.18;
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
+import "@chainlink/contracts/src/v0.8/ChainlinkClient.sol";
+import "./Vault.sol";
+import "./SpecializationBadge.sol";
 
 error Unauthorized();
 error PriceNotMet(uint256 price);
 
-contract LearningPlatform is ReentrancyGuard, Ownable {
+contract LearningPlatform is ReentrancyGuard, Ownable, ChainlinkClient {
     enum State {
         Closed,
         Open,
@@ -31,8 +34,9 @@ contract LearningPlatform is ReentrancyGuard, Ownable {
         bool exists;
     }
 
-    mapping(uint256 => Course) public courses;
-    mapping(uint256 => Degree) public degrees;
+    mapping(uint256 => Course) public courses; // courseID to struct
+    mapping(uint256 => Degree) public degrees; // degreeID to struct
+    mapping(uint256 => string) public degreeURIs; // degreeId to nft URI
     mapping(address => uint256) public studentBalances;
     mapping(address => mapping(uint256 => State)) public studentToCourseState;
     mapping(address => mapping(uint256 => State)) public studentToDegreeState;
@@ -42,11 +46,30 @@ contract LearningPlatform is ReentrancyGuard, Ownable {
     IERC20 public usdcToken;
     State courseState;
     State degreeState;
-    address payable public immutable i_daoAddress;
+    address payable public immutable i_vaultAddress;
+    Vault public vault;
+    SpecializationBadge public nft;
 
-    constructor(address _usdcToken, address payable _daoAddress) {
+    // Chainlink variables
+    address private oracle;
+    bytes32 private jobId;
+    uint256 private fee;
+
+    constructor(
+        address _usdcToken,
+        address payable _vaultAddress,
+        address _nft,
+        address _oracle,
+        bytes32 _jobId,
+        uint256 _fee
+    ) {
         usdcToken = IERC20(_usdcToken);
-        i_daoAddress = _daoAddress;
+        i_vaultAddress = _vaultAddress;
+        vault = Vault(_vaultAddress);
+        nft = SpecializationBadge(_nft);
+        setChainlinkOracle(_oracle);
+        jobId = _jobId;
+        fee = _fee;
     }
 
     function createCourse(
@@ -74,11 +97,13 @@ contract LearningPlatform is ReentrancyGuard, Ownable {
 
     function createDegree(
         uint256 _degreeId,
-        uint256 _price
+        uint256 _price,
+        string memory _uri
     ) external onlyOwner {
         require(!degrees[_degreeId].exists, "Degree already exists");
         degrees[_degreeId] = Degree(new uint256[](0), _price, true);
         degreeState = State.Closed;
+        degreeURIs[_degreeId] = _uri;
     }
 
     function addCourseToDegree(
@@ -121,52 +146,83 @@ contract LearningPlatform is ReentrancyGuard, Ownable {
 
     function updateDegree(
         uint256 _degreeId,
-        uint256 _price
+        uint256 _price,
+        string memory _uri,
+        uint256[] _courseIds
     ) external onlyOwner {
         require(degrees[_degreeId].exists, "Degree does not exist");
         degrees[_degreeId].price = _price;
+        degreeURIs[_degreeId] = _uri;
+        degrees[_degreeId].courseIds = _courseIds;
     }
 
     function purchaseCourse(uint256 _courseId) external nonReentrant {
+        uint256 price = courses[_courseId].price;
+        uint256 royaltyFee = courses[_courseId].royaltyFee;
+        address creator = courses[_courseId].creator;
+        uint256 deposit = price - royaltyFee;
+        uint256 royaltyAmount = (price * royaltyFee) / 100;
+
         require(courses[_courseId].exists, "Course does not exist");
+        require(vault.depositToken(usdcToken, deposit), "Transaction Failed!");
         require(
-            usdcToken.transferFrom(
-                msg.sender,
-                i_daoAddress,
-                courses[_courseId].price
-            ),
-            "Failed to transfer USDC tokens"
+            usdcToken.approve(creator, royaltyAmount),
+            "Failed to approve transaction"
         );
+        // Transfer the royalty fee to the course creator
+        require(
+            usdcToken.transferFrom(msg.sender, creator, royaltyAmount),
+            "Failed to transfer royalty fee"
+        );
+
         studentToCourseState[msg.sender][_courseId] = State.Open;
         CoursePurchases[_courseId] += 1;
 
         // mint and transfer nft to student
+        nft.safeMint(msg.sender, courses[_courseId].uri);
     }
 
     function purchaseDegree(uint256 _degreeId) external nonReentrant {
         require(degrees[_degreeId].exists, "Degree does not exist");
+
+        // Calculate the total price of the degree
+        uint256 totalPrice = degrees[_degreeId].price;
+
+        // Approve and transfer USDC tokens
+
         require(
-            usdcToken.transferFrom(
-                msg.sender,
-                i_daoAddress,
-                degrees[_degreeId].price
-            ),
+            vault.depositToken(usdcToken, totalPrice),
             "Failed to transfer USDC tokens"
         );
 
-        for (uint i = 0; i < degrees[_degreeId].courseIds.length; i++) {
-            studentToCourseState[msg.sender][
-                degrees[_degreeId].courseIds[i]
-            ] = State.Open;
+        // Transfer the royalty fee to the course creators for each course in the degree
+        for (uint256 i = 0; i < degrees[_degreeId].courseIds.length; i++) {
+            uint256 courseId = degrees[_degreeId].courseIds[i];
+            address creator = courses[courseId].creator;
+            uint256 royaltyAmount = (totalPrice *
+                courses[courseId].royaltyFee) /
+                (degrees[_degreeId].courseIds.length);
+            require(
+                usdcToken.approve(creator, royaltyAmount),
+                "Failed to approve transaction!"
+            );
+            require(
+                usdcToken.transferFrom(msg.sender, creator, royaltyAmount),
+                "Failed to transfer royalty fee"
+            );
+
+            studentToCourseState[msg.sender][courseId] = State.Open;
         }
 
         // mint and transfer nft to student
+        nft.safeMint(msg.sender, degreeURIs[_degreeId]);
     }
 
     function completeCourse(uint256 _courseId) external nonReentrant {
+        uint256 usdcAmount = vault.usdcAmount();
         require(courses[_courseId].exists, "Course does not exist");
         require(
-            i_daoAddress.balance >= courses[_courseId].completionReward,
+            usdcAmount >= courses[_courseId].completionReward,
             "Insufficient rewards balance"
         );
 
@@ -174,15 +230,21 @@ contract LearningPlatform is ReentrancyGuard, Ownable {
         studentToCourseState[msg.sender][_courseId] = State.Finished;
         CourseCompletions[_courseId] += 1;
 
-        // call update token uri function in nft contract
-        // call approve function in nft contract or call dao give rewards function in dao contract
-        usdcToken.transferFrom(
-            i_daoAddress,
-            msg.sender,
-            courses[_courseId].completionReward
+        // Call Chainlink to fetch the updated token URI
+        requestUpdatedTokenURI(_courseId);
+
+        bool success = vault.delegatecall(
+            abi.encodeWithSignature(
+                "withdrawUsdc(uint256, address)",
+                usdcAmount >= courses[_courseId].completionReward,
+                msg.sender
+            )
         );
+
+        require(success, "Transfer failed");
     }
 
+    // automatically call this function with chainlink automation
     function completeDegree(uint256 _degreeId) external nonReentrant {
         require(degrees[_degreeId].exists, "Degree does not exist");
         for (uint256 i = 0; i < degrees[_degreeId].courseIds.length; i++) {
@@ -195,8 +257,33 @@ contract LearningPlatform is ReentrancyGuard, Ownable {
         }
         studentToDegreeState[msg.sender][_degreeId] = State.Finished;
 
-        // require all courses in a degree have been completed - for loop and enum state
-        // call update token uri function in nft contract
+        // call _mint function in certificate contract
+    }
+
+    function requestUpdatedTokenURI(uint256 _courseId) private {
+        Chainlink.Request memory req = buildChainlinkRequest(
+            jobId,
+            address(this),
+            this.fulfillTokenURI.selector
+        );
+        req.add("courseId", uint2str(_courseId));
+        req.add("url", "YOUR_EXTERNAL_ADAPTER_URL");
+
+        // Set the desired Chainlink options
+        req.add("copyPath", "YOUR_JSON_PATH");
+        req.add("useHttpGet", "true");
+
+        // Send the request
+        sendChainlinkRequestTo(oracle, req, fee);
+    }
+
+    function fulfillTokenURI(
+        bytes32 _requestId,
+        string memory _tokenURI
+    ) public recordChainlinkFulfillment(_requestId) {
+        // Update the token URI for the completed course
+        uint256 courseId = parseInt(_tokenURI);
+        nft.updateTokenURI(courseId, courses[courseId].uri);
     }
 
     // function updateYieldRate(uint256 _courseId) external onlyOwner {
@@ -225,3 +312,4 @@ contract LearningPlatform is ReentrancyGuard, Ownable {
 // Dao contract
 // increase daoBalance on receive funciton in dao contract
 // send royalties to teachers
+// give access to this contract to send money to and from vault

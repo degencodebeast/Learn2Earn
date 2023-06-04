@@ -2,8 +2,9 @@
 pragma solidity ^0.8.18;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
-contract CommunityForum {
+contract CommunityForum is ReentrancyGuard {
     struct ForumThread {
         uint256 id;
         uint256 closingTime;
@@ -18,9 +19,12 @@ contract CommunityForum {
     }
 
     mapping(uint256 => ForumThread) public forumThreads;
+
+    address public i_vaultAddress;
     uint256 public totalThreads;
     uint256 public maxReward;
-    IERC20 public learn;
+
+    IERC20 public learnToken;
 
     event ThreadCreated(uint256 indexed id, uint256 closingTime);
     event AnswerSubmitted(
@@ -36,10 +40,15 @@ contract CommunityForum {
     );
     event RewardsDistributed(uint256 indexed threadId);
 
-    constructor(IERC20 _token, uint256 _maxReward) {
-        learn = _token;
+    constructor(
+        address _learntoken,
+        uint256 _maxReward,
+        address _vaultAddress
+    ) {
+        learnToken = IERC20(_learntoken);
         totalThreads = 0;
         maxReward = _maxReward;
+        i_vaultAddress = _vaultAddress;
     }
 
     function createThread() external {
@@ -82,7 +91,7 @@ contract CommunityForum {
         emit Upvote(_threadId, _answerId, msg.sender, answer.upvoteCount);
     }
 
-    function distributeRewards(uint256 _threadId) external {
+    function distributeRewards(uint256 _threadId) external nonReentrant {
         // automatically with chainlink automation
         require(_threadId <= totalThreads, "Invalid thread ID");
         ForumThread storage thread = forumThreads[_threadId];
@@ -97,9 +106,20 @@ contract CommunityForum {
         for (uint256 i = 1; i <= thread.answerCount; i++) {
             Answer storage answer = thread.answers[i];
             if (answer.upvoteCount > 0) {
-                uint256 reward = (answer.upvoteCount * maxReward) /
-                    totalUpvotes;
-                learn.transfer(answer.student, reward);
+                uint256 reward = ((answer.upvoteCount * maxReward) /
+                    totalUpvotes);
+                require(
+                    learnToken.approve(answer.student, reward),
+                    "Token transfer was not approved!"
+                );
+                require(
+                    learnToken.transferFrom(
+                        i_vaultAddress,
+                        answer.student,
+                        reward
+                    ),
+                    "Token transfer failed"
+                );
             }
         }
 

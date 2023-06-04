@@ -6,30 +6,28 @@ import "@openzeppelin/contracts/token/ERC721/extensions/ERC721URIStorage.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/Counters.sol";
 
-contract Degree is ERC721, ERC721URIStorage, Ownable {
+contract SpecializationBadge is ERC721, ERC721URIStorage, Ownable {
     using Counters for Counters.Counter;
 
     Counters.Counter private _tokenIdCounter;
 
     mapping(uint256 => string) _tokenURIs;
 
-    address private immutable i_burnerAddress;
+    // Events
+    event NftMinted(address to, uint256 tokenId);
+    event TokenUriUpdated(uint256 tokenId, string uri);
 
     /**
      * @dev Initializes the contract by setting an admin and burner address. The burner address is used to create a modifier so that nobody is able to burn their nft.
      */
-    constructor(address _burnerAddress) ERC721("Degree", "DEG") {
-        i_burnerAddress = _burnerAddress;
-    }
-
-    modifier onlyBurner() {
-        // i_burnerAddress is an address that we created and did not save the private key making it essentially an unusable wallet
-        require(msg.sender == i_burnerAddress, "You can't burn this token!");
-        _;
-    }
+    constructor() ERC721("Degree", "DEG") {}
 
     function getTokenIdCount() public view returns (uint256) {
         return _tokenIdCounter.current();
+    }
+
+    function _baseURI() internal pure override returns (string memory) {
+        return ""; // insert base uri
     }
 
     /**
@@ -38,8 +36,8 @@ contract Degree is ERC721, ERC721URIStorage, Ownable {
      */
     function _burn(
         uint256 tokenId
-    ) internal view override(ERC721, ERC721URIStorage) onlyBurner {
-        revert("disabled");
+    ) internal view override(ERC721, ERC721URIStorage) {
+        revert("This badge can not be burned!");
     }
 
     /**
@@ -64,6 +62,8 @@ contract Degree is ERC721, ERC721URIStorage, Ownable {
         _tokenURIs[tokenId] = uri;
         _safeMint(to, tokenId);
         _setTokenURI(tokenId, uri);
+
+        emit NftMinted(to, tokenId);
     }
 
     /**
@@ -89,7 +89,6 @@ contract Degree is ERC721, ERC721URIStorage, Ownable {
      * @param   tokenId .
      */
     function _transfer(
-        // approve the transaction first
         address from,
         address to,
         uint256 tokenId
@@ -101,13 +100,7 @@ contract Degree is ERC721, ERC721URIStorage, Ownable {
         require(to != address(0), "ERC721: transfer to the zero address");
 
         _beforeTokenTransfer(from, to, tokenId, 1);
-        require(
-            ERC721.ownerOf(tokenId) == from,
-            "ERC721: transfer from incorrect owner"
-        );
     }
-
-    // Chainlink keepers address is admin
 
     /**
      * @dev     Function updates tokenUri. It will be called automatically by the chainlink keepers when a course is completed.
@@ -120,5 +113,7 @@ contract Degree is ERC721, ERC721URIStorage, Ownable {
     ) public onlyOwner {
         _setTokenURI(tokenId, uri);
         _tokenURIs[tokenId] = uri;
+
+        emit TokenUriUpdated(tokenId, uri);
     }
 }

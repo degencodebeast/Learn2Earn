@@ -6,7 +6,7 @@
 // Bravo Compatible allows to use the Bravo compatible functions such as getVotes and getReceipts
 
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.9;
+pragma solidity ^0.8.18;
 
 import "@openzeppelin/contracts/governance/Governor.sol";
 import "@openzeppelin/contracts/governance/extensions/GovernorSettings.sol";
@@ -14,6 +14,7 @@ import "@openzeppelin/contracts/governance/extensions/GovernorCountingSimple.sol
 import "@openzeppelin/contracts/governance/extensions/GovernorVotes.sol";
 import "@openzeppelin/contracts/governance/extensions/GovernorVotesQuorumFraction.sol";
 import "@openzeppelin/contracts/governance/extensions/GovernorTimelockControl.sol";
+import "../Learn.sol";
 
 contract Dao is
     Governor,
@@ -23,11 +24,14 @@ contract Dao is
     GovernorVotesQuorumFraction,
     GovernorTimelockControl
 {
+    Learn public learnContract;
+
     // Proposal Counts
     uint256 public s_proposalCount;
 
     constructor(
-        IVotes _token,
+        IVotes _Token,
+        address _learnToken,
         TimelockController _timelock,
         uint256 _votingDelay,
         uint256 _votingPeriod,
@@ -39,11 +43,12 @@ contract Dao is
             _votingPeriod /* 50400 blocks => 1 week */,
             0 /* 0 => Because we want anyone to be able to create a proposal */
         )
-        GovernorVotes(_token)
+        GovernorVotes(_Token)
         GovernorVotesQuorumFraction(_quorumPercentage) // Minimum percentage of participants required for a proposal to pass
         GovernorTimelockControl(_timelock)
     {
         s_proposalCount = 0;
+        learnContract = Learn(_learnToken);
     }
 
     // The following functions are overrides required by Solidity.
@@ -115,6 +120,15 @@ contract Dao is
         bytes32 descriptionHash
     ) internal override(Governor, GovernorTimelockControl) {
         super._execute(proposalId, targets, values, calldatas, descriptionHash);
+    }
+
+    function castVote(
+        uint256 proposalId,
+        uint8 support,
+        uint256 amount
+    ) public returns (uint256 balance) {
+        learnContract.approve(address(this), amount);
+        learnContract._burnFrom(address(this), amount);
     }
 
     function _cancel(
