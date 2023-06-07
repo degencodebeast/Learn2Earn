@@ -5,13 +5,29 @@ import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@chainlink/contracts/src/v0.8/ChainlinkClient.sol";
+import "@chainlink/contracts/src/v0.8/AutomationCompatible.sol";
 import "./Vault.sol";
 import "./SpecializationBadge.sol";
 
 error Unauthorized();
 error PriceNotMet(uint256 price);
 
-contract LearningPlatform is ReentrancyGuard, Ownable, ChainlinkClient {
+//Use the AutomationCompatibleInterface from the library to ensure your checkUpkeep and performUpkeep 
+//function definitions match the definitions expected by the Chainlink Automation Network.
+
+//TODOS
+// creating the functions needed to implement chainlink automation in order to update the token uri of the
+// course badge as you progress through the course, and to automatically mint and transfer the two different nfts.
+// One is the course badge that will be upgraded throughout the course as you make progress and the second is the
+// Nft that is given upon completion of the course like a certificate
+
+//create 3 JSON files for the nft metadata's one for each nft and one more for the nft badge after the uri has been
+//updated. the metadata would be the same except for the asset used for the img
+
+//also just go through the contracts and see if you can spot any major issues you dont have to write any test right
+// now we have an auditor who will be doing that once we finish the contract. I did start to implement the chainlink
+// functions in the marketplace contract
+contract LearningPlatform is ReentrancyGuard, Ownable, ChainlinkClient, AutomationCompatibleInterface {
     enum State {
         Closed,
         Open,
@@ -218,6 +234,8 @@ contract LearningPlatform is ReentrancyGuard, Ownable, ChainlinkClient {
         nft.safeMint(msg.sender, degreeURIs[_degreeId]);
     }
 
+    //This function should be called by chainlink's automation
+    
     function completeCourse(uint256 _courseId) external nonReentrant {
         uint256 usdcAmount = vault.usdcAmount();
         require(courses[_courseId].exists, "Course does not exist");

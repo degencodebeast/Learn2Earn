@@ -116,4 +116,8 @@ contract SpecializationBadge is ERC721, ERC721URIStorage, Ownable {
 
         emit TokenUriUpdated(tokenId, uri);
     }
+
+    function supportsInterface() internal override {
+
+    }
 }
